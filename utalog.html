@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>うたログ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background: linear-gradient(135deg, #e6f7f3 0%, #b3e0d2 100%);
+        }
+        h1 {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+        }
+        .card {
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: all 0.3s ease-in-out;
+            border-left-width: 6px;
+            border-left-style: solid;
+        }
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        .status-message {
+            transition: opacity 0.5s ease-in-out;
+        }
+        .playback-progress-bg {
+            cursor: pointer;
+        }
+        .confirmation-timer-bar {
+            transition: width 10s linear;
+        }
+        select:disabled {
+            background-color: #f3f4f6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="antialiased text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">うたログ</h1>
+            <p class="mt-2 text-gray-600">毎日の練習を記録して、最高の合唱祭にしよう！</p>
+        </header>
+
+        <div class="mb-6 bg-white/90 backdrop-filter backdrop-blur-lg p-4 rounded-lg shadow">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                    <label for="userGrade" class="block text-sm font-medium text-gray-700 mb-1">学年</label>
+                    <select id="userGrade" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500">
+                        <option value="">選択</option>
+                        <option value="1">1年</option>
+                        <option value="2">2年</option>
+                        <option value="3">3年</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="userClass" class="block text-sm font-medium text-gray-700 mb-1">クラス</label>
+                    <select id="userClass" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500" disabled>
+                        <option value="">-----</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="userNumber" class="block text-sm font-medium text-gray-700 mb-1">出席番号</label>
+                    <select id="userNumber" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500" disabled>
+                        <option value="">-----</option>
+                    </select>
+                </div>
+            </div>
+            <div id="logStatus" class="status-message text-sm text-gray-500 mt-2 h-5 opacity-0"></div>
+        </div>
+
+        <div class="relative">
+             <div id="songListOverlay" class="absolute inset-0 bg-gray-200/70 backdrop-blur-sm flex items-center justify-center rounded-lg z-10 transition-opacity duration-300">
+                <p class="text-lg font-bold text-gray-700 bg-white/80 px-4 py-2 rounded-lg shadow">学年・クラス・出席番号を選択してください</p>
+            </div>
+            <div id="songList" class="space-y-4">
+            </div>
+        </div>
+        
+        <audio id="audioPlayer"></audio>
+
+    </div>
+
+    <script>
+        // ★★★ GASのURLを貼り付けました ★★★
+        const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzLs4gh8w2dTG5zOsNjWPCHImN7mk97vJIM3XuSNVYo455j3l6B5HCVIxp6mci9dKiM/exec';
+
+        const songList = document.getElementById('songList');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const logStatus = document.getElementById('logStatus');
+        const userGradeSelect = document.getElementById('userGrade');
+        const userClassSelect = document.getElementById('userClass');
+        const userNumberSelect = document.getElementById('userNumber');
+        const songListOverlay = document.getElementById('songListOverlay');
+
+        let currentlyPlayingId = null;
+        let songAwaitingConfirmationId = null;
+        let confirmationTimeout = null;
+        let confirmationInterval = null;
+        
+        const himawariParts = [{key: 'all', name: '（全員）'}];
+        const koryuParts = [{key: 'dansei', name: '（男声）'}, {key: 'jyosei', name: '（女声）'}];
+
+        let songs = [
+            { id: 'song-1g', grade: '1', class: 'common', name: '1年学年合唱：夢の世界を', path: '1nen', color: '#16a34a', bgColor: '#f0fdf4' },
+            { id: 'song-1a', grade: '1', class: '1A', name: '１Ａ：マイ バラード', path: '1A', color: '#ec4899', bgColor: '#fdf2f8' },
+            { id: 'song-1b', grade: '1', class: '1B', name: '１Ｂ：この地球のどこかで', path: '1B', color: '#14b8a6', bgColor: '#f0fdfa' },
+            { id: 'song-1c', grade: '1', class: '1C', name: '１Ｃ：HEIWAの鐘', path: '1C', color: '#6366f1', bgColor: '#eef2ff' },
+            { id: 'song-1f', grade: '1', class: 'F組', name: '１年Ｆ組：ひまわりの約束', path: '1F', color: '#6b7280', bgColor: '#f3f4f6', customParts: himawariParts },
+            { id: 'song-2g', grade: '2', class: 'common', name: '2年学年合唱：輝くために', path: '2nen', color: '#96514d', bgColor: '#f7f2f2' },
+            { id: 'song-2a', grade: '2', class: '2A', name: '２Ａ：僕らの奇跡', path: '2A', color: '#ef4444', bgColor: '#fee2e2' },
+            { id: 'song-2b', grade: '2', class: '2B', name: '２Ｂ：永遠のキャンバス', path: '2B', color: '#3b82f6', bgColor: '#dbeafe' },
+            { id: 'song-2c', grade: '2', class: '2C', name: '２Ｃ：YELL', path: '2C', color: '#eab308', bgColor: '#fefce8' },
+            { id: 'song-2f', grade: '2', class: 'F組', name: '２年Ｆ組：ひまわりの約束', path: '2F', color: '#6b7280', bgColor: '#f3f4f6', customParts: himawariParts },
+            { id: 'song-3g', grade: '3', class: 'common', name: '3年学年合唱：群青', path: '3nen', color: '#075985', bgColor: '#e0f2fe' },
+            { id: 'song-3a', grade: '3', class: '3A', name: '３Ａ：あなたへ', path: '3A', color: '#f97316', bgColor: '#fff7ed' },
+            { id: 'song-3b', grade: '3', class: '3B', name: '３Ｂ：結 -ゆい-', path: '3B', color: '#0891b2', bgColor: '#ecfeff' },
+            { id: 'song-3c', grade: '3', class: '3C', name: '３Ｃ：いのちの歌', path: '3C', color: '#65a30d', bgColor: '#f7fee7' },
+            { id: 'song-3f', grade: '3', class: 'F組', name: '３年Ｆ組：ひまわりの約束', path: '3F', color: '#6b7280', bgColor: '#f3f4f6', customParts: himawariParts },
+            { id: 'song-koryu', grade: 'all', class: 'koryu', name: '交流合唱：もう一人じゃない', path: 'koryu', color: '#6b7280', bgColor: '#f3f4f6', customParts: koryuParts },
+        ];
+        
+        const defaultParts = [{key: 'all', name: '（全員）'}, {key: 'soprano', name: '（ソプラノ）'}, {key: 'alto', name: '（アルト）'}, {key: 'tenor', name: '（テノール）'}];
+        let fullSongList = [];
+        songs.forEach(baseSong => {
+            const partsToUse = baseSong.customParts || defaultParts;
+            partsToUse.forEach(part => {
+                fullSongList.push({
+                    ...baseSong,
+                    id: `${baseSong.id}-${part.key}`,
+                    name: `${baseSong.name}${part.name}`,
+                    path: `${baseSong.path}_${part.key}.mp3`,
+                    count: 0,
+                });
+            });
+        });
+        songs = fullSongList;
+        
+        const classStructure = { '1': ['1A', '1B', '1C', 'F組'], '2': ['2A', '2B', '2C', 'F組'], '3': ['3A', '3B', '3C', 'F組'], };
+
+        function saveData() { const storableData = { songs: songs.map(song => ({ id: song.id, count: song.count })), userGrade: userGradeSelect.value, userClass: userClassSelect.value, userNumber: userNumberSelect.value }; localStorage.setItem('chorusTrackerDataOnline', JSON.stringify(storableData)); }
+        function loadData() { const data = localStorage.getItem('chorusTrackerDataOnline'); if (data) { const loadedData = JSON.parse(data); if (loadedData.userGrade) { userGradeSelect.value = loadedData.userGrade; populateClasses(); } if (loadedData.userClass) { userClassSelect.value = loadedData.userClass; } if (loadedData.userNumber) userNumberSelect.value = loadedData.userNumber; if (loadedData.songs) { songs.forEach(song => { const savedSong = loadedData.songs.find(s => s.id === song.id); if (savedSong) { song.count = savedSong.count; } }); } } }
+        function checkSelectionAndUnlock() {  const isSelected = userGradeSelect.value && userClassSelect.value && userNumberSelect.value; songListOverlay.style.opacity = isSelected ? '0' : '1'; songListOverlay.style.pointerEvents = isSelected ? 'none' : 'auto'; if (isSelected) { saveData(); } }
+        function createCountIcons(count) { const crown = '👑'; const star = '🌟'; const note = '🎵'; if (count === 0) return ''; const crownCount = Math.floor(count / 10); const starCount = Math.floor((count % 10) / 5); const noteCount = count % 5; return crown.repeat(crownCount) + star.repeat(starCount) + note.repeat(noteCount); }
+
+        function renderSongs() {
+            const selectedGrade = userGradeSelect.value;
+            const selectedClass = userClassSelect.value;
+            songList.innerHTML = '';
+            let songsToDisplay = [];
+            if (selectedGrade && selectedClass) {
+                songsToDisplay = songs.filter(song => {
+                    if (song.class === 'koryu') { return true; }
+                    return song.grade === selectedGrade && (song.class === 'common' || song.class === selectedClass);
+                });
+            }
+            songsToDisplay.forEach(song => {
+                const isThisSongActive = song.id === currentlyPlayingId;
+                const isPlaying = isThisSongActive && !audioPlayer.paused;
+                let progress = 0, currentTime = '0:00', duration = '--:--';
+                if (isThisSongActive && audioPlayer.duration) { progress = (audioPlayer.currentTime / audioPlayer.duration) * 100; currentTime = formatTime(audioPlayer.currentTime); duration = formatTime(audioPlayer.duration); }
+                const card = document.createElement('div');
+                card.className = `card p-4 flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4`;
+                card.dataset.id = song.id;
+                card.style.borderLeftColor = song.color;
+                card.style.backgroundColor = song.bgColor;
+                const playerUI = isThisSongActive ? `<div class="mt-3 border-t border-gray-300/80 pt-3"><div class="flex items-center space-x-3"><button class="stop-button text-gray-500 hover:text-gray-800" data-id="${song.id}" title="停止してリセット"><i class="fas fa-stop fa-lg"></i></button><div class="flex-grow"><div class="w-full bg-gray-400/50 rounded-full h-2 playback-progress-bg" title="クリックして巻き戻し"><div class="playback-progress-bar h-2 rounded-full" style="width: ${progress}%; background-color: ${song.color};"></div></div></div><div class="text-xs font-mono w-24 text-right"><span class="playback-time-current">${currentTime}</span> / <span class="playback-time-duration">${duration}</span></div></div></div>` : '';
+                card.innerHTML = `<div class="flex-shrink-0"><button class="play-pause-button w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg text-2xl transition-all duration-300" data-id="${song.id}" style="background-color: ${song.color};"><i class="fas ${isPlaying ? 'fa-pause' : 'fa-play'}"></i></button></div><div class="flex-grow w-full"><div class="flex justify-between items-start"><p class="font-bold truncate" title="${song.name}">${song.name}</p><div class="text-lg font-bold text-right ml-2" style="color: ${song.color}; min-width: 140px;"><span class="play-count-icons text-xl align-middle">${createCountIcons(song.count)}</span><span class="ml-2">${song.count} 回</span></div></div><div class="confirmation-area h-12 mt-2 flex items-center">${song.id === songAwaitingConfirmationId ? `<div class="flex items-center w-full space-x-2"><button class="confirm-listen-button bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg flex-shrink-0" data-id="${song.id}">聞いた！ (<span class="countdown">10</span>)</button><div class="flex-1 bg-gray-300 rounded-full h-2.5"><div class="confirmation-timer-bar bg-green-500 h-2.5 rounded-full" style="width: 100%;"></div></div></div>` : ''}</div>${playerUI}</div>`;
+                songList.appendChild(card);
+            });
+        }
+        
+        function populateClasses() {
+            const selectedGrade = userGradeSelect.value;
+            userClassSelect.innerHTML = '<option value="">選択</option>';
+            if (selectedGrade && classStructure[selectedGrade]) { classStructure[selectedGrade].forEach(className => { const option = document.createElement('option'); option.value = className; option.textContent = className; userClassSelect.appendChild(option); }); userClassSelect.disabled = false; } else { userClassSelect.disabled = true; }
+            userClassSelect.value = '';
+        }
+
+        function populateNumbers() { userNumberSelect.innerHTML = '<option value="">選択</option>'; for (let i = 1; i <= 40; i++) { const option = document.createElement('option'); option.value = i; option.textContent = i; userNumberSelect.appendChild(option); } userNumberSelect.disabled = false; }
+        
+        function playNewSong(id) {
+            const song = songs.find(s => s.id === id);
+            if (!song) return;
+            if (songAwaitingConfirmationId) {
+                clearTimeout(confirmationTimeout);
+                clearInterval(confirmationInterval);
+                songAwaitingConfirmationId = null;
+            }
+            audioPlayer.src = song.path;
+            currentlyPlayingId = id;
+            const playPromise = audioPlayer.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.error("Playback error:", error);
+                    currentlyPlayingId = null;
+                    renderSongs();
+                });
+            }
+        }
+
+        function stopSong() { audioPlayer.pause(); audioPlayer.currentTime = 0; currentlyPlayingId = null; renderSongs(); }
+        function finishSong() { if (currentlyPlayingId) { songAwaitingConfirmationId = currentlyPlayingId; startConfirmationTimer(currentlyPlayingId); } currentlyPlayingId = null; renderSongs(); }
+        
+        function startConfirmationTimer(songId) { clearTimeout(confirmationTimeout); clearInterval(confirmationInterval); renderSongs(); requestAnimationFrame(() => { const timerBar = document.querySelector(`.card[data-id="${songId}"] .confirmation-timer-bar`); if (timerBar) { timerBar.style.width = '0%'; } }); let timeLeft = 10; const countdownEl = () => document.querySelector(`.card[data-id="${songId}"] .countdown`); confirmationInterval = setInterval(() => { timeLeft--; if (countdownEl()) { countdownEl().textContent = timeLeft; } if (timeLeft <= 0) { clearInterval(confirmationInterval); } }, 1000); confirmationTimeout = setTimeout(() => { if (songAwaitingConfirmationId === songId) { songAwaitingConfirmationId = null; clearInterval(confirmationInterval); showStatus('時間切れです。カウントされませんでした。', 'error'); renderSongs(); } }, 10000); }
+        function logPlayToGAS(songName) { const data = { userGrade: userGradeSelect.value, userClass: userClassSelect.value, userNumber: userNumberSelect.value, songName }; if (!data.userGrade || !data.userClass || !data.userNumber) { showStatus('学年・クラス・番号が未選択のため記録できません。', 'error'); return; } if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL === 'ここにGASのウェブアプリURLを貼り付け') { console.warn('GASのURLが設定されていません。'); return; } showStatus(`「${songName}」の再生を記録中...`, 'info'); fetch(GAS_WEB_APP_URL, { method: 'POST', mode: 'no-cors', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(() => showStatus(`記録しました！ (${new Date().toLocaleTimeString()})`, 'success')).catch(error => { console.error('Error:', error); showStatus('エラー：記録に失敗しました。', 'error'); }); }
+        function formatTime(seconds) { if (isNaN(seconds)) return '--:--'; const min = Math.floor(seconds / 60); const sec = Math.floor(seconds % 60); return `${min}:${String(sec).padStart(2, '0')}`; }
+        
+        function updatePlaybackUI() { if (!currentlyPlayingId) return; const card = document.querySelector(`.card[data-id="${currentlyPlayingId}"]`); if (!card) return; const currentTimeEl = card.querySelector('.playback-time-current'); const durationEl = card.querySelector('.playback-time-duration'); const progressBar = card.querySelector('.playback-progress-bar'); if (currentTimeEl && durationEl && progressBar) { progressBar.style.transition = 'width 0.1s linear'; const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100; progressBar.style.width = `${progress}%`; currentTimeEl.textContent = formatTime(audioPlayer.currentTime); durationEl.textContent = formatTime(audioPlayer.duration); } }
+        let statusTimeout;
+        function showStatus(message, type) { logStatus.textContent = message; logStatus.className = 'status-message text-sm mt-2 h-5'; if (type === 'success') { logStatus.classList.add('text-green-600'); } else if (type === 'error') { logStatus.classList.add('text-red-600'); } else { logStatus.classList.add('text-gray-500'); } logStatus.style.opacity = 1; clearTimeout(statusTimeout); statusTimeout = setTimeout(() => { logStatus.style.opacity = 0; }, 5000); }
+
+        userGradeSelect.addEventListener('change', () => {  populateClasses(); userClassSelect.value = ''; userNumberSelect.innerHTML = '<option value="">-----</option>'; userNumberSelect.value = ''; userNumberSelect.disabled = true; checkSelectionAndUnlock(); renderSongs(); });
+        userClassSelect.addEventListener('change', () => { if (userClassSelect.value) { populateNumbers(); userNumberSelect.disabled = false; } else { userNumberSelect.innerHTML = '<option value="">-----</option>'; userNumberSelect.disabled = true; } userNumberSelect.value = ''; checkSelectionAndUnlock(); renderSongs(); });
+        userNumberSelect.addEventListener('change', () => { checkSelectionAndUnlock(); });
+        
+        songList.addEventListener('click', (event) => {
+            const playPauseButton = event.target.closest('.play-pause-button');
+            const stopButton = event.target.closest('.stop-button');
+            const progressBarBg = event.target.closest('.playback-progress-bg');
+            const confirmButton = event.target.closest('.confirm-listen-button');
+
+            if (playPauseButton) { const id = playPauseButton.dataset.id; if (id === currentlyPlayingId) { if (audioPlayer.paused) audioPlayer.play(); else audioPlayer.pause(); } else { playNewSong(id); } return; }
+            if (stopButton) { stopSong(); return; }
+            if (progressBarBg && currentlyPlayingId) { const rect = progressBarBg.getBoundingClientRect(); const clickX = event.clientX - rect.left; const newProgress = clickX / rect.width; const newTime = audioPlayer.duration * newProgress; if (newTime < audioPlayer.currentTime) { const progressBar = progressBarBg.querySelector('.playback-progress-bar'); if(progressBar) progressBar.style.transition = 'none'; audioPlayer.currentTime = newTime; } }
+            if (confirmButton) { const id = confirmButton.dataset.id; const song = songs.find(s => s.id === id); if (song && songAwaitingConfirmationId === id) { clearTimeout(confirmationTimeout); clearInterval(confirmationInterval); songAwaitingConfirmationId = null; song.count++; logPlayToGAS(song.name); saveData(); showStatus(`「${song.name}」を記録しました！`, 'success'); renderSongs(); } }
+        });
+        
+        audioPlayer.addEventListener('play', renderSongs);
+        audioPlayer.addEventListener('pause', renderSongs);
+        audioPlayer.addEventListener('ended', finishSong);
+        audioPlayer.addEventListener('error', () => { if (currentlyPlayingId) { const song = songs.find(s => s.id === currentlyPlayingId); if (song) { showStatus(`エラー: 「${song.path}」が見つかりません`, 'error'); } stopSong(); } });
+        audioPlayer.addEventListener('timeupdate', updatePlaybackUI);
+        audioPlayer.addEventListener('loadedmetadata', updatePlaybackUI);
+
+        loadData();
+        checkSelectionAndUnlock();
+        renderSongs();
+    </script>
+</body>
+</html>
+
